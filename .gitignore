@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+mlruns/
+mlartifacts/
+data/processed/*.csv
+models/*.pkl
+models/*.json
+.DS_Store

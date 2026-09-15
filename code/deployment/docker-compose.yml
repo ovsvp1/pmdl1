@@ -1,0 +1,36 @@
+services:
+  scheduler:
+    build:
+      context: ./scheduler
+    volumes:
+      - ../../code:/app/code:ro
+      - ../../data:/app/data
+      - ../../models:/app/models
+      - ../../mlruns:/app/mlruns
+    environment:
+      - PIPELINE_INTERVAL_SECONDS=300
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./api
+    volumes:
+      - ../../models:/app/models:ro
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_PATH=/app/models/model.pkl
+    depends_on:
+      - scheduler
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ./app
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
