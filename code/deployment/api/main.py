@@ -1,6 +1,7 @@
 """Stage 3: Model API — serves predictions from the latest trained model."""
 import os
 import threading
+from typing import List
 
 import joblib
 import pandas as pd
@@ -56,3 +57,14 @@ def predict(features: PassengerFeatures):
     row = pd.DataFrame([features.model_dump()])
     probability = float(model.predict_proba(row)[0][1])
     return PredictionResponse(survived=probability >= 0.5, survival_probability=probability)
+
+
+@app.post("/predict_batch", response_model=List[PredictionResponse])
+def predict_batch(passengers: List[PassengerFeatures]):
+    model = get_model()
+    rows = pd.DataFrame([p.model_dump() for p in passengers])
+    probabilities = model.predict_proba(rows)[:, 1]
+    return [
+        PredictionResponse(survived=bool(p >= 0.5), survival_probability=float(p))
+        for p in probabilities
+    ]
