@@ -1,16 +1,4 @@
 services:
-  scheduler:
-    build:
-      context: ./scheduler
-    volumes:
-      - ../../code:/app/code:ro
-      - ../../data:/app/data
-      - ../../models:/app/models
-      - ../../mlruns:/app/mlruns
-    environment:
-      - PIPELINE_INTERVAL_SECONDS=300
-    restart: unless-stopped
-
   api:
     build:
       context: ./api
@@ -20,8 +8,6 @@ services:
       - "8000:8000"
     environment:
       - MODEL_PATH=/app/models/model.pkl
-    depends_on:
-      - scheduler
     restart: unless-stopped
 
   app:
