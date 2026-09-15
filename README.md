@@ -26,7 +26,13 @@ automatically every 5 minutes.
 * **`app`** container (Streamlit) provides input fields, a **Predict**
   button, and displays the prediction returned by the API.
 
-The API and the app (Stage 3) always run in Docker, in separate containers.
+The API and the app (Stage 3) always run in **separate containers**, as
+required. They are built from the same image (`code/deployment/Dockerfile`,
+containing both `main.py` and `app.py` plus the combined dependencies) —
+`docker-compose.yml` just runs a different `command:` in each container
+(`uvicorn` for the API, `streamlit run` for the app). One Dockerfile, two
+containers.
+
 Stages 1 and 2 run as plain Python scripts orchestrated by
 `run_pipeline.sh` — this keeps the scheduling mechanism itself simple and
 portable (standard OS cron) instead of needing an extra always-on
@@ -41,8 +47,10 @@ container just to sleep and loop.
 │   ├── models/               # Stage 2: model engineering
 │   │   └── train.py
 │   └── deployment/          # Stage 3: deployment
-│       ├── api/              # FastAPI model API + Dockerfile
-│       ├── app/               # Streamlit app + Dockerfile
+│       ├── api/              # FastAPI model API (main.py)
+│       ├── app/               # Streamlit app (app.py)
+│       ├── Dockerfile         # single image, shared by both containers
+│       ├── requirements.txt
 │       └── docker-compose.yml
 ├── data
 │   ├── raw/                  # titanic.csv (input dataset)
