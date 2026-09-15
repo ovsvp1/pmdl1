@@ -51,9 +51,14 @@ automatically on a schedule.
 
 ## Dataset
 
-[Titanic passenger dataset](https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv)
-(891 passengers). Task: predict whether a passenger survived from
-`Pclass`, `Sex`, `Age`, `SibSp`, `Parch`, `Fare`, and `Embarked`.
+[Titanic - Machine Learning from Disaster](https://www.kaggle.com/competitions/titanic)
+(Kaggle competition dataset, `train.csv`, 891 labeled passengers). Only the
+labeled `train.csv` is used — the competition's own `test.csv` has no ground
+truth (`gender_submission.csv` is just an example baseline submission, not
+real labels), so this pipeline performs its own train/test split from
+`train.csv` as required by Stage 1. Task: predict whether a passenger
+survived from `Pclass`, `Sex`, `Age`, `SibSp`, `Parch`, `Fare`, and
+`Embarked`.
 
 Data engineering (`code/datasets/data_pipeline.py`):
 1. Load `data/raw/titanic.csv`.
