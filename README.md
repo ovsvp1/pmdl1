@@ -8,23 +8,28 @@ automatically every 5 minutes.
 ## Architecture
 
 ```
-              every 5 min (cron)
-┌──────────────────┐  data + train   ┌───────────┐        ┌───────────┐
-│ run_pipeline.sh   │ ──────────────▶ │  models/  │ ◀─────▶│    api    │ ◀── HTTP ── ┌─────┐
-│ (host, scheduled) │  writes model   │ model.pkl │  reads │ (FastAPI) │             │ app │
-└──────────────────┘                  └───────────┘        └───────────┘ ──────────▶ │(Streamlit)│
+                       every 5 min
+┌───────────────┐  runs   ┌────────────────┐  data + train   ┌───────────┐        ┌───────────┐
+│  scheduler.py │ ──────▶ │ run_pipeline.sh│ ──────────────▶ │  models/  │ ◀─────▶│    api    │ ◀── HTTP ── ┌─────┐
+│ (host process)│         │ (stages 1 + 2) │  writes model   │ model.pkl │  reads │ (FastAPI) │             │ app │
+└───────────────┘         └────────────────┘                 └───────────┘        └───────────┘ ──────────▶ │(Streamlit)│
 ```
 
+* **`scheduler.py`** is the automation entry point — it runs the complete
+  pipeline immediately on startup, then every 5 minutes for as long as the
+  process is running.
 * **`run_pipeline.sh`** runs the data engineering (Stage 1) and model
   engineering (Stage 2) scripts, then makes sure the API/app containers are
-  up (`docker compose up -d`). It is scheduled to run every 5 minutes (see
-  below), which is what makes the whole pipeline automated.
+  up (`docker compose up -d`).
 * **`api`** container (FastAPI) loads the latest model from the shared
-  `models/` volume and serves `/predict`. It reloads the model
-  automatically whenever the file changes, so it always serves the
-  freshest model without a restart.
-* **`app`** container (Streamlit) provides input fields, a **Predict**
-  button, and displays the prediction returned by the API.
+  `models/` volume and serves `/predict` (single passenger) and
+  `/predict_batch` (a list of passengers, used by the CSV upload feature).
+  It reloads the model automatically whenever the file changes, so it
+  always serves the freshest model without a restart.
+* **`app`** container (Streamlit) has two tabs: **Single passenger** (input
+  fields + a **Predict** button showing the result) and **Upload CSV**
+  (upload a dataset, run predictions for every row, and download the
+  results as a CSV file).
 
 The API and the app (Stage 3) always run in **separate containers**, as
 required. They are built from the same image (`code/deployment/Dockerfile`,
@@ -33,10 +38,8 @@ containing both `main.py` and `app.py` plus the combined dependencies) —
 (`uvicorn` for the API, `streamlit run` for the app). One Dockerfile, two
 containers.
 
-Stages 1 and 2 run as plain Python scripts orchestrated by
-`run_pipeline.sh` — this keeps the scheduling mechanism itself simple and
-portable (standard OS cron) instead of needing an extra always-on
-container just to sleep and loop.
+Stages 1 and 2 run as plain Python scripts orchestrated by `run_pipeline.sh`.
+`scheduler.py` uses the lightweight Python `schedule` library to invoke the complete pipeline every five minutes, so the scheduling logic is version-controlled with the project and is easy to demonstrate.
 
 ## Repository structure
 
@@ -57,6 +60,7 @@ container just to sleep and loop.
 │   └── processed/            # train.csv / test.csv (generated)
 ├── models/                    # model.pkl / metrics.json (generated)
 ├── notebooks/                 # exploratory notebooks (optional)
+├── scheduler.py                # automatically runs the full pipeline every 5 min
 ├── run_pipeline.sh             # runs stages 1+2 and (re)deploys stage 3
 └── requirements.txt
 ```
@@ -109,22 +113,15 @@ python3 -m venv venv
 
 ### Scheduling it to run automatically every 5 minutes
 
-`run_pipeline.sh` is a plain script — schedule it with your OS's own
-scheduler:
-
-**macOS / Linux (cron):**
+Start the repository's Python scheduler:
 
 ```bash
-crontab -e
-# add this line (replace with the absolute path to the repo):
-*/5 * * * * /absolute/path/to/pmldl_assignment1/run_pipeline.sh >> /absolute/path/to/pmldl_assignment1/pipeline.log 2>&1
+./venv/bin/python scheduler.py
 ```
 
-**Windows:** create a Task Scheduler task that runs `run_pipeline.sh`
-(via WSL or Git Bash) every 5 minutes.
+The scheduler runs `run_pipeline.sh` immediately and then launches another complete pipeline run every 5 minutes while the scheduler process is running. This means the scheduling implementation is part of the repository and does not require a separate cron configuration.
 
-If a run ever takes longer than 5 minutes, increase the interval
-accordingly.
+If a pipeline run takes longer than the configured interval, increase the interval in `scheduler.py`, as permitted by the assignment. Stop the scheduler with `Ctrl+C`.
 
 To stop the deployed containers:
 

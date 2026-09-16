@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs the full pipeline: data engineering -> model engineering -> deployment.
-# Intended to be scheduled (e.g. via cron) to run every 5 minutes.
+# Invoked by scheduler.py automatically every 5 minutes.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
