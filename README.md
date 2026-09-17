@@ -1,26 +1,29 @@
 # PMLDL Assignment 1 — MLOps Deployment Pipeline
 
-An automated MLOps pipeline that cleans and splits the Titanic dataset, trains a
-survival-prediction model (logging metrics to MLflow), and serves it through a
-FastAPI model API consumed by a Streamlit web app. All three stages run
-automatically every 5 minutes.
+A fully Dockerized MLOps pipeline for Titanic survival prediction. A
+scheduler container runs data engineering and model training immediately
+and then every 5 minutes; the FastAPI service automatically reloads the
+newly generated model, and the Streamlit app talks to the API. No local
+Python environment is required — `docker compose up` runs everything.
 
 ## Architecture
 
 ```
-                       every 5 min
-┌───────────────┐  runs   ┌────────────────┐  data + train   ┌───────────┐        ┌───────────┐
-│  scheduler.py │ ──────▶ │ run_pipeline.sh│ ──────────────▶ │  models/  │ ◀─────▶│    api    │ ◀── HTTP ── ┌─────┐
-│ (host process)│         │ (stages 1 + 2) │  writes model   │ model.pkl │  reads │ (FastAPI) │             │ app │
-└───────────────┘         └────────────────┘                 └───────────┘        └───────────┘ ──────────▶ │(Streamlit)│
+Docker Compose
+├── scheduler container       (Stages 1 + 2, every 5 min)
+│   ├── code/datasets/data_pipeline.py
+│   └── code/models/train.py         ──▶ writes models/model.pkl
+├── api container (FastAPI, port 8000)     ◀── reads models/model.pkl
+│   └── /predict, /predict_batch
+└── app container (Streamlit, port 8501)   ── HTTP ──▶ api
+    ├── "Single passenger" tab (form + Predict button)
+    └── "Upload CSV" tab (batch predictions, downloadable as CSV)
 ```
 
-* **`scheduler.py`** is the automation entry point — it runs the complete
-  pipeline immediately on startup, then every 5 minutes for as long as the
-  process is running.
-* **`run_pipeline.sh`** runs the data engineering (Stage 1) and model
-  engineering (Stage 2) scripts, then makes sure the API/app containers are
-  up (`docker compose up -d`).
+* **`scheduler`** container runs the data engineering (Stage 1) and model
+  engineering (Stage 2) scripts back-to-back, immediately on startup and
+  then every 5 minutes for as long as the container runs
+  (`docker_scheduler.py`, built from `code/pipeline.Dockerfile`).
 * **`api`** container (FastAPI) loads the latest model from the shared
   `models/` volume and serves `/predict` (single passenger) and
   `/predict_batch` (a list of passengers, used by the CSV upload feature).
@@ -31,15 +34,17 @@ automatically every 5 minutes.
   (upload a dataset, run predictions for every row, and download the
   results as a CSV file).
 
+The `data/`, `models/`, and `mlruns/` directories are mounted as volumes
+shared between containers, so a model produced by the scheduler is
+immediately visible to the API container without rebuilding or
+restarting it.
+
 The API and the app (Stage 3) always run in **separate containers**, as
 required. They are built from the same image (`code/deployment/Dockerfile`,
 containing both `main.py` and `app.py` plus the combined dependencies) —
 `docker-compose.yml` just runs a different `command:` in each container
 (`uvicorn` for the API, `streamlit run` for the app). One Dockerfile, two
 containers.
-
-Stages 1 and 2 run as plain Python scripts orchestrated by `run_pipeline.sh`.
-`scheduler.py` uses the lightweight Python `schedule` library to invoke the complete pipeline every five minutes, so the scheduling logic is version-controlled with the project and is easy to demonstrate.
 
 ## Repository structure
 
@@ -49,10 +54,11 @@ Stages 1 and 2 run as plain Python scripts orchestrated by `run_pipeline.sh`.
 │   │   └── data_pipeline.py
 │   ├── models/               # Stage 2: model engineering
 │   │   └── train.py
+│   ├── pipeline.Dockerfile   # scheduler container image
 │   └── deployment/          # Stage 3: deployment
 │       ├── api/              # FastAPI model API (main.py)
 │       ├── app/               # Streamlit app (app.py)
-│       ├── Dockerfile         # single image, shared by both containers
+│       ├── Dockerfile         # single image, shared by api + app
 │       ├── requirements.txt
 │       └── docker-compose.yml
 ├── data
@@ -60,8 +66,8 @@ Stages 1 and 2 run as plain Python scripts orchestrated by `run_pipeline.sh`.
 │   └── processed/            # train.csv / test.csv (generated)
 ├── models/                    # model.pkl / metrics.json (generated)
 ├── notebooks/                 # exploratory notebooks (optional)
-├── scheduler.py                # automatically runs the full pipeline every 5 min
-├── run_pipeline.sh             # runs stages 1+2 and (re)deploys stage 3
+├── docker_scheduler.py         # runs stages 1+2 every 5 min (inside the scheduler container)
+├── run_pipeline.sh             # convenience wrapper: docker compose up -d --build
 └── requirements.txt
 ```
 
@@ -95,35 +101,41 @@ Model engineering (`code/models/train.py`):
 
 ## Running the pipeline
 
-**Requirements:** Python 3.11+, Docker, and Docker Compose.
+**Requirements:** Docker and Docker Compose. No local Python environment
+or `pip install` is required — everything runs inside containers.
 
 ```bash
 git clone <this-repo-url>
 cd pmldl_assignment1
 
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
-
-./run_pipeline.sh   # runs stages 1+2 once and starts the API + app
+./run_pipeline.sh   # docker compose up -d --build
 ```
 
 * **Web app:** http://localhost:8501
 * **Model API:** http://localhost:8000 (interactive docs at
   http://localhost:8000/docs)
 
-### Scheduling it to run automatically every 5 minutes
+The scheduler container starts training immediately; the first model is
+usually ready within a few seconds. Automation is built in — as long as
+the containers are running, the scheduler retrains every 5 minutes with
+no extra setup (no host cron, no separate process to start).
 
-Start the repository's Python scheduler:
+Check services:
 
 ```bash
-./venv/bin/python scheduler.py
+docker compose -f code/deployment/docker-compose.yml ps
 ```
 
-The scheduler runs `run_pipeline.sh` immediately and then launches another complete pipeline run every 5 minutes while the scheduler process is running. This means the scheduling implementation is part of the repository and does not require a separate cron configuration.
+Watch automated pipeline runs:
 
-If a pipeline run takes longer than the configured interval, increase the interval in `scheduler.py`, as permitted by the assignment. Stop the scheduler with `Ctrl+C`.
+```bash
+docker compose -f code/deployment/docker-compose.yml logs -f scheduler
+```
 
-To stop the deployed containers:
+If a pipeline run ever takes longer than 5 minutes, increase
+`INTERVAL_SECONDS` in `docker_scheduler.py` accordingly.
+
+Stop everything:
 
 ```bash
 docker compose -f code/deployment/docker-compose.yml down
@@ -132,16 +144,15 @@ docker compose -f code/deployment/docker-compose.yml down
 ### Inspecting MLflow runs
 
 ```bash
+python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 ./venv/bin/mlflow ui --backend-store-uri ./mlruns
 ```
 
 ## Notes
 
 * The trained model (`models/model.pkl`) and MLflow run data (`mlruns/`)
-  are not committed to the repository — they are regenerated by
-  `run_pipeline.sh`.
+  are not committed to the repository — they are regenerated automatically
+  by the `scheduler` container.
 * The API reloads the model file automatically whenever it changes, so it
-  never needs to be rebuilt or restarted after a retraining run —
-  `run_pipeline.sh` only calls `docker compose up -d`, which is a no-op for
-  already-running containers.
+  never needs to be rebuilt or restarted after a retraining run.
 # pmdl1
